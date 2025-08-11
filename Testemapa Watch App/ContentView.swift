@@ -6,18 +6,23 @@
 //
 
 import SwiftUI
+import CoreMotion
+import HealthKit
 
 struct ContentView: View {
+    @StateObject private var motionManager = MotionManager()
+    
     var body: some View {
         VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+            Text("Dados do acelerometro!")
+            
+            Text("X: \(motionManager.x, specifier: "%.2f")")
+            Text("Y: \(motionManager.y, specifier: "%.2f")")
+            Text("Z: \(motionManager.z, specifier: "%.2f")")
+            }
+                
+            }
         }
-        .padding()
-    }
-}
 
 #Preview {
     ContentView()
