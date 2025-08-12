@@ -348,6 +348,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Testemapa;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Este aplicativo precisa ler seus dados de saúde para exibir suas estatísticas de atividade";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Este aplicativo precisa salvar seus treinos no app Saúde.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Este aplicativo precisa da sua localização para registrar o percurso da sua atividade.";
 				INFOPLIST_KEY_NSMotionUsageDescription = "Este aplicativo utiliza o sensor de movimento para detectar a atividade em tempo real.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = br.com.challenge07.Testemapa;
@@ -381,6 +382,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Testemapa;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Este aplicativo precisa ler seus dados de saúde para exibir suas estatísticas de atividade";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Este aplicativo precisa salvar seus treinos no app Saúde.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Este aplicativo precisa da sua localização para registrar o percurso da sua atividade.";
 				INFOPLIST_KEY_NSMotionUsageDescription = "Este aplicativo utiliza o sensor de movimento para detectar a atividade em tempo real.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = br.com.challenge07.Testemapa;
