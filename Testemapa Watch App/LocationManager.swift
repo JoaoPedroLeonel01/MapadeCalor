@@ -5,50 +5,57 @@
 //  Created by Joao pedro Leonel on 12/08/25.
 //
 
-import SwiftUI
-import CoreLocation
-import CoreMotion
-import MapKit
+import Foundation
+import CoreLocation // Framework principal para localização
+import Combine     // Para ObservableObject
 
-class HeatmapManager: NSObject, ObservableObject, CLLocationManagerDelegate {
-    @Published var locations: [CLLocationCoordinate2D] = [] // Guarda as coordenadas
-    private var locationManager = CLLocationManager()
-    private var motionManager = CMMotionManager()
-    
+class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+    private let locationManager = CLLocationManager()
+
+    // @Published notifica a View quando a localização for atualizada.
+    @Published var location: CLLocation? = nil
+    @Published var authorizationStatus: CLAuthorizationStatus
+
     override init() {
-        super.init()
-        
-        // Configura GPS
-        locationManager.delegate = self
-        locationManager.requestWhenInUseAuthorization() // Pede permissão
-        locationManager.startUpdatingLocation() // Começa a capturar localizações
-        
-        // Configura acelerômetro e giroscópio
-        if motionManager.isAccelerometerAvailable && motionManager.isGyroAvailable {
-            motionManager.accelerometerUpdateInterval = 0.5 // Coleta a cada 0.5s
-            motionManager.startAccelerometerUpdates()
-            
-            motionManager.startGyroUpdates()
+        // Inicializa o status de autorização
+        self.authorizationStatus = locationManager.authorizationStatus
+        super.init() // Chama o init da classe pai (NSObject)
+
+        self.locationManager.delegate = self
+        self.locationManager.desiredAccuracy = kCLLocationAccuracyBest // Máxima precisão. Cuidado com a bateria.
+        self.locationManager.requestWhenInUseAuthorization() // Solicita a permissão.
+    }
+
+    // Esta função é chamada automaticamente quando o status da permissão muda.
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        self.authorizationStatus = manager.authorizationStatus
+
+        // Se a permissão for concedida, comece a buscar a localização.
+        if manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways {
+            manager.startUpdatingLocation()
         }
+    }
+
+    // Esta função é chamada automaticamente sempre que uma nova localização é recebida.
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        // locations é um array, a localização mais recente é geralmente a última.
+        guard let latestLocation = locations.last else { return }
+
+        // Atualiza a nossa propriedade publicada na thread principal.
+        DispatchQueue.main.async {
+            self.location = latestLocation
+        }
+    }
+
+    // Função para tratar erros.
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        print("Erro ao obter localização: \(error.localizedDescription)")
+    }
+
+    // Função para parar as atualizações e economizar bateria.
+    func stopUpdating() {
+        locationManager.stopUpdatingLocation()
     }
     
-    // Quando a localização muda
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let coord = locations.last?.coordinate else { return }
-        
-        // Aqui poderíamos usar dados do acelerômetro para calcular intensidade
-        if let accelData = motionManager.accelerometerData {
-            let intensidade = abs(accelData.acceleration.x) +
-                              abs(accelData.acceleration.y) +
-                              abs(accelData.acceleration.z)
-            
-            // Só salva se o movimento for significativo
-            if intensidade > 0.1 {
-                self.locations.append(coord)
-            }
-        }
-    }
+    
 }
-
-
-
