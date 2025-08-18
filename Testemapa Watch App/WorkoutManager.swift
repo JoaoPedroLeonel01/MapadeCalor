@@ -11,13 +11,12 @@ import CoreMotion
 import Combine
 import CoreGraphics
 
-// Classe para gerenciar a sessão de treino e a captura de movimento de alta frequência
 class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
-
+    
     // Módulos Principais
     private let healthStore = HKHealthStore()
     private let motionManager = CMMotionManager()
-
+    
     // Estado do Treino
     private var session: HKWorkoutSession?
     private var builder: HKWorkoutBuilder?
@@ -25,16 +24,17 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
     
     // Dados de Posição (PDR)
     @Published var currentPosition: CGPoint = .zero
-    @Published var path: [CGPoint] = [] // Histórico de posições
+    @Published var path: [CGPoint] = []
     
-    private var referenceHeading: Double? // Ângulo de calibração inicial
+    private var referenceHeading: Double?
     
-    // Constantes e Estado para Detecção de Passo
-    private let STEP_THRESHOLD_HIGH: Double = 0.35   // entra passo
-    private let STEP_THRESHOLD_LOW: Double  = 0.15   // sai do passo
-    private let STEP_LENGTH: Double = 0.80           // mantenha/ajuste depois
-    private var isStepInProgress = false    // Trava para evitar detecção múltipla
-
+    // Constantes de detecção de passo (ajustadas para eixo Y)
+    private let STEP_THRESHOLD_HIGH: Double = 0.20
+    private let STEP_THRESHOLD_LOW: Double = 0.12
+    private let ROTATION_LIMIT: Double = 1.0 // rad/s para ignorar giro de punho
+    private let STEP_LENGTH: Double = 0.75
+    private var isStepInProgress = false
+    
     // Pedir autorização para o HealthKit
     func requestAuthorization() {
         let typesToShare: Set = [HKObjectType.workoutType()]
@@ -52,7 +52,6 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
     
     // Iniciar o treino
     func startWorkout(referenceHeading: Double) {
-        // Zera o estado anterior e armazena a referência
         self.referenceHeading = referenceHeading
         self.currentPosition = .zero
         self.path = [.zero]
@@ -60,7 +59,7 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
         let configuration = HKWorkoutConfiguration()
         configuration.activityType = .volleyball
         configuration.locationType = .outdoor
-
+        
         do {
             session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
             builder = session?.associatedWorkoutBuilder()
@@ -68,14 +67,12 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
             print("Erro ao criar a sessão de treino: \(error)")
             return
         }
-
+        
         session?.delegate = self
-
+        
         let startDate = Date()
         session?.startActivity(with: startDate)
         
-        
-        // Inicia a captura de movimento de alta frequência
         startMotionUpdates()
     }
     
@@ -83,9 +80,7 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
     func stopWorkout() {
         stopMotionUpdates()
         session?.end()
-        
     }
-    
     
     // Iniciar captura do CoreMotion
     private func startMotionUpdates() {
@@ -99,8 +94,6 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
         
         motionManager.startDeviceMotionUpdates(using: .xTrueNorthZVertical, to: queue) { [weak self] motion, error in
             guard let self = self, let motion = motion else { return }
-            
-            // Processa os dados de movimento em uma função separada
             self.processDeviceMotion(motion)
         }
     }
@@ -110,39 +103,46 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
         motionManager.stopDeviceMotionUpdates()
     }
     
-    // O ALGORITMO PRINCIPAL (PDR)
+    // Algoritmo principal
     private func processDeviceMotion(_ motion: CMDeviceMotion) {
-        let acceleration = motion.userAcceleration
-        let magnitude = sqrt(pow(acceleration.x, 2) + pow(acceleration.y, 2) + pow(acceleration.z, 2))
+        let forwardAccel = motion.userAcceleration.y // eixo Y = frente/trás do braço
+        let rotation = motion.rotationRate           // velocidade angular (giroscópio)
         
-        // Detecção de Passo (Algoritmo de Pico)
-        if magnitude > STEP_THRESHOLD_HIGH && !isStepInProgress {
-            isStepInProgress = true // Trava o passo
+        // Filtro: ignora se giro de punho for muito alto
+        let isRotatingWrist = abs(rotation.x) > ROTATION_LIMIT ||
+                              abs(rotation.y) > ROTATION_LIMIT ||
+                              abs(rotation.z) > ROTATION_LIMIT
+        
+        if forwardAccel > STEP_THRESHOLD_HIGH && !isStepInProgress && !isRotatingWrist {
+            isStepInProgress = true
             
-            // Cálculo da Posição
             guard let refHeading = self.referenceHeading else { return }
-            
-            let yawInRadians = motion.attitude.yaw // Direção atual em relação ao norte verdadeiro
+            let yawInRadians = motion.attitude.yaw
             let currentHeading = yawInRadians.toDegrees()
-            
-            // Ajusta a direção com base na calibração
             let relativeDirection = currentHeading - refHeading
             
-            // Calcula o deslocamento e atualiza a posição
             let deltaX = STEP_LENGTH * sin(relativeDirection.toRadians())
             let deltaY = STEP_LENGTH * cos(relativeDirection.toRadians())
+            
+            print("------------------------------------")
+            print("PASSO DETECTADO!")
+            print(String(format: "  - Aceleração (Y): %.2f G", forwardAccel))
+            print(String(format: "  - Direção Atual do Watch: %.1f°", currentHeading))
+            print(String(format: "  - Direção Relativa à Quadra: %.1f°", relativeDirection))
+            print(String(format: "  - Deslocamento (Δx, Δy): (%.2f, %.2f)", deltaX, deltaY))
             
             DispatchQueue.main.async {
                 self.currentPosition.x += deltaX
                 self.currentPosition.y += deltaY
                 self.path.append(self.currentPosition)
+                print(String(format: "  - Nova Posição (X, Y): (%.2f, %.2f)", self.currentPosition.x, self.currentPosition.y))
             }
-        } else if magnitude < STEP_THRESHOLD_LOW { // Limiar inferior para "resetar" a trava do passo
+        } else if forwardAccel < STEP_THRESHOLD_LOW {
             isStepInProgress = false
         }
     }
     
-    // HKWorkoutSessionDelegate
+    // MARK: - HKWorkoutSessionDelegate
     func workoutSession(_ workoutSession: HKWorkoutSession, didChangeTo toState: HKWorkoutSessionState, from fromState: HKWorkoutSessionState, date: Date) {
         DispatchQueue.main.async {
             self.workoutState = toState
@@ -152,8 +152,8 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
             builder?.beginCollection(withStart: date) { success, error in
                 if !success {
                     print("Erro ao iniciar a coleção de dados do treino: \(String(describing: error))")
-                }else{
-                    print( " coleção de dados iniciada.")
+                } else {
+                    print("Coleção de dados iniciada.")
                 }
             }
         }
@@ -161,18 +161,16 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
         if toState == .ended {
             builder?.endCollection(withEnd: date) { success, error in
                 self.builder?.finishWorkout { workout, error in
-                    // O treino está finalizado e salvo no HealthKit
-                    // O array `self.path` contém todas as coordenadas.
                     print("Treino finalizado. Pontos de mapa de calor coletados: \(self.path.count)")
                     
                     guard !self.path.isEmpty else {
-                        print("ERRO: array 'path' está vazio. Nenhum passo foi detectado.")
+                        print("ERRO: array 'path' está vazio.")
                         return
                     }
                     
                     print("Dados a serem enviados: \(self.path.count) pontos.")
                     
-                    let serializablePath = self.path.map{ ["x": $0.x, "y": $0.y]}
+                    let serializablePath = self.path.map { ["x": $0.x, "y": $0.y] }
                     let workoutData: [String: Any] = [
                         "workoutPath": serializablePath,
                         "workoutEndData": Date()
