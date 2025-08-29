@@ -31,6 +31,7 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
     // MARK: - Referências de Cálculo
     private var courtHeadingRad: Double?
     private var lastDistance: Double = 0.0 // Guarda a última distância medida para calcular o delta
+    private var latestYaw: Double = 0.0    // Guarda o yaw mais recente de forma confiável
 
     // MARK: - Ciclo de Vida do Treino
 
@@ -54,6 +55,7 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
         self.currentPosition = .zero
         self.path = [.zero]
         self.lastDistance = 0.0
+        self.latestYaw = 0.0
 
         // 2. Configura a sessão do HealthKit
         let configuration = HKWorkoutConfiguration()
@@ -77,7 +79,7 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
     }
 
     func stopWorkout() {
-        pedometer.stopUpdates() // Use a chamada correta para parar
+        pedometer.stopUpdates()
         motionManager.stopDeviceMotionUpdates()
         session?.end()
     }
@@ -86,9 +88,13 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
 
     private func startDirectionUpdates() {
         guard motionManager.isDeviceMotionAvailable else { return }
-        // 10Hz é uma boa frequência para capturar a direção sem gastar muita bateria
-        motionManager.deviceMotionUpdateInterval = 1.0 / 10.0
-        motionManager.startDeviceMotionUpdates(using: .xTrueNorthZVertical)
+        motionManager.deviceMotionUpdateInterval = 1.0 / 20.0 // Frequência boa para dados frescos
+
+        // Usa um handler para atualizar a propriedade de forma confiável, evitando race conditions
+        motionManager.startDeviceMotionUpdates(using: .xTrueNorthZVertical, to: .main) { [weak self] motion, error in
+            guard let self = self, let motion = motion, error == nil else { return }
+            self.latestYaw = motion.attitude.yaw
+        }
     }
 
     private func startPedometerUpdates() {
@@ -99,25 +105,27 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
 
         pedometer.startUpdates(from: Date()) { [weak self] pedometerData, error in
             guard let self = self, let data = pedometerData, error == nil else { return }
+            
+            // Agora só precisamos da referência da quadra, pois o yaw já está salvo
+            guard let courtHeading = self.courtHeadingRad else { return }
 
-            // Garante que temos a direção mais recente do motionManager
-            guard let deviceMotion = self.motionManager.deviceMotion,
-                  let courtHeading = self.courtHeadingRad
-            else { return }
-
-            // --- LÓGICA CORRIGIDA ---
+            // --- LÓGICA REVISADA E CORRIGIDA ---
 
             // 1. Calcula a distância percorrida APENAS neste update (o delta)
             let newDistance = data.distance?.doubleValue ?? 0
             let deltaDistance = newDistance - self.lastDistance
+            
+            // IMPORTANTE: Ignora updates sem movimento real para evitar ruído
+            guard deltaDistance > 0.1 else { return } // Ignora se o movimento for menor que 10cm
+            
             self.lastDistance = newDistance // Atualiza para o próximo cálculo
 
-            // 2. Pega a direção atual e a alinha com a bússola da quadra
-            let currentYaw = deviceMotion.attitude.yaw // Direção do corpo
-            let finalAngle = currentYaw + courtHeading  // Direção na quadra
+            // 2. Pega a direção do corpo (da nossa propriedade) e calcula o ângulo relativo à quadra
+            let currentYaw = self.latestYaw
+            let finalAngle = currentYaw - courtHeading // CORREÇÃO: Subtração
 
-            // 3. Calcula o deslocamento (deltaX, deltaY) usando o delta da distância
-            let deltaX = deltaDistance * sin(finalAngle)
+            // 3. Calcula o deslocamento, corrigindo o eixo X para não ficar espelhado
+            let deltaX = -deltaDistance * sin(finalAngle)
             let deltaY = deltaDistance * cos(finalAngle)
 
             // 4. Adiciona o deslocamento à posição atual
@@ -126,9 +134,15 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
                 self.currentPosition.y += deltaY
                 self.path.append(self.currentPosition)
 
-                // Opcional: print para depuração
-                 print(String(format: "ΔDist: %.2fm | Pos(%.2f, %.2f)",
-                              deltaDistance, self.currentPosition.x, self.currentPosition.y))
+                // Print de depuração ativado para análise no console do Xcode
+                print(String(format: "ΔDist: %.2fm | Yaw: %.2f | Angle: %.2f | ΔPos(%.2f, %.2f) | NewPos(%.2f, %.2f)",
+                             deltaDistance,
+                             currentYaw,
+                             finalAngle,
+                             deltaX,
+                             deltaY,
+                             self.currentPosition.x,
+                             self.currentPosition.y))
             }
         }
     }
