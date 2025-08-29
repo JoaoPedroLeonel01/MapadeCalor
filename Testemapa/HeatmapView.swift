@@ -1,138 +1,104 @@
 import SwiftUI
-import Combine
 
+// Heatmap “blurred” com rotação em torno da ORIGEM (0,0).
+//- points: pontos no sistema do “mundo” (metros)
+//- worldBounds: retângulo fixo do mundo (ex.: meia quadra)
+//- rotationDegrees: rotação aplicada aos pontos ao redor da ORIGEM (0,0)
+//- flipX/flipY: espelhamento opcional no mundo
 struct HeatmapView: View {
-    // Recebe os pontos brutos para desenhar o caminho e o mapa
     let points: [CGPoint]
-    
-    // Define um tamanho ideal para as "células" da nuvem de calor
-    let idealCellSize: CGFloat = 20.0
-    
+    let worldBounds: CGRect
+    var rotationDegrees: CGFloat = 0
+    var flipX: Bool = false
+    var flipY: Bool = false
+
+    private let idealCellSize: CGFloat = 20
+
     var body: some View {
-        // Canvas para desenho customizado
         Canvas { context, size in
-            guard points.count > 1 else { return }
-            
-            // Processar os dados para o tamanho do Canvas
-            
-            // Calcula a grade ideal para o tamanho disponível
-            let cols = max(1, Int(size.width / idealCellSize))
-            let rows = max(1, Int(size.height / idealCellSize))
-            let result = HeatmapProcessor.process(points: points, intoGridOfSize: (rows: rows, cols: cols))
-            let gridData = result.grid
-            let maxValue = result.maxValue
-            
-            // Cria uma função auxiliar para escalar os pontos do treino para o tamanho do canvas
-            func scalePoint(_ point: CGPoint) -> CGPoint {
-                // Encontra os limites dos dados para normalização
-                let minX = points.min(by: { $0.x < $1.x })!.x
-                let maxX = points.max(by: { $0.x < $1.x })!.x
-                let minY = points.min(by: { $0.y < $1.y })!.y
-                let maxY = points.max(by: { $0.y < $1.y })!.y
-                
-                let spanX = maxX - minX
-                let spanY = maxY - minY
-                
-                // Normaliza a posição para o intervalo [0, 1]
-                let normalizedX = spanX == 0 ? 0.5 : (point.x - minX) / spanX
-                let normalizedY = spanY == 0 ? 0.5 : (point.y - minY) / spanY
-                
-                // Mapeia para as coordenadas do canvas
-                // Invertemos o eixo Y porque o Core Graphics começa no topo (0,0) e o SwiftUI no fundo.
-                return CGPoint(x: normalizedX * size.width, y: (1.0 - normalizedY) * size.height)
+            // 1) Filtra pontos dentro do mundo ANTES de transformar (para manter coerência com bounds)
+            let inBounds = points.filter { worldBounds.contains($0) }
+            guard !inBounds.isEmpty else { return }
+
+            // 2) Rotação no PRÓPRIO EIXO (origem 0,0) + flips
+            func rotateOrigin(_ p: CGPoint, deg: CGFloat) -> CGPoint {
+                let d = deg.truncatingRemainder(dividingBy: 360)
+                if d == 0 { return p }
+                let rad = d * .pi / 180
+                let rx = p.x * cos(rad) - p.y * sin(rad)
+                let ry = p.x * sin(rad) + p.y * cos(rad)
+                return CGPoint(x: rx, y: ry)
             }
-            
-            // Desenhar a Nuvem de Calor
-            // Aplica um filtro de "blur" a tudo que for desenhado dentro deste bloco
-            context.addFilter(.blur(radius: 10))
-            
-            for row in 0..<gridData.count {
-                for col in 0..<gridData[row].count {
-                    let value = gridData[row][col]
-                    guard value > 0 else { continue }
-                    
-                    let intensity = Double(value) / Double(maxValue)
-                    let color = color(forIntensity: intensity)
-                    
-                    // Calcula a posição central da célula no canvas
-                    let cellWidth = size.width / CGFloat(cols)
-                    let cellHeight = size.height / CGFloat(rows)
-                    let cellX = (CGFloat(col) * cellWidth) + (cellWidth / 2)
-                    let cellY = (CGFloat(row) * cellHeight) + (cellHeight / 2)
-                    
-                    // Desenha um círculo semi-transparente que, com o blur, cria o efeito de nuvem
-                    context.fill(
-                        Path(ellipseIn: CGRect(x: cellX - cellWidth, y: cellY - cellHeight, width: cellWidth * 2, height: cellHeight * 2)),
-                        with: .color(color.opacity(0.9))
-                    )
+            func flip(_ p: CGPoint) -> CGPoint {
+                CGPoint(x: flipX ? -p.x : p.x,
+                        y: flipY ? -p.y : p.y)
+            }
+            let transformed = inBounds.map { flip( rotateOrigin($0, deg: rotationDegrees) ) }
+
+            // 3) Clipa o desenho para o tamanho do canvas
+            context.clip(to: Path(CGRect(origin: .zero, size: size)))
+
+            // 4) Escala mundo → canvas (Y invertido para coordenada de tela)
+            let minX = worldBounds.minX, maxX = worldBounds.maxX
+            let minY = worldBounds.minY, maxY = worldBounds.maxY
+            let spanX = max(maxX - minX, 0.0001)
+            let spanY = max(maxY - minY, 0.0001)
+
+            func scalePoint(_ p: CGPoint) -> CGPoint {
+                let nx = (p.x - minX) / spanX
+                let ny = (p.y - minY) / spanY
+                return CGPoint(x: nx * size.width, y: (1 - ny) * size.height)
+            }
+
+            // 5) Heatmap por grade + blur
+            let cols = max(Int(size.width / idealCellSize), 1)
+            let rows = max(Int(size.height / idealCellSize), 1)
+
+            let result = HeatmapProcessor.process(
+                points: transformed,
+                worldBounds: worldBounds,
+                gridSize: (rows, cols)
+            )
+
+            let cellW = size.width / CGFloat(cols)
+            let cellH = size.height / CGFloat(rows)
+
+            if result.maxValue > 0 {
+                context.drawLayer { layer in
+                    layer.addFilter(.blur(radius: 10))
+
+                    for r in 0..<rows {
+                        for c in 0..<cols {
+                            let value = result.grid[r][c]
+                            if value == 0 { continue }
+
+                            let t = CGFloat(value) / CGFloat(result.maxValue)
+
+                            // círculo maior que a célula para ficar orgânico
+                            let center = CGPoint(x: (CGFloat(c) + 0.5) * cellW,
+                                                 y: (CGFloat(r) + 0.5) * cellH)
+                            let radius = max(cellW, cellH)
+                            let rect = CGRect(x: center.x - radius,
+                                              y: center.y - radius,
+                                              width: 2 * radius,
+                                              height: 2 * radius)
+
+                            layer.fill(Path(ellipseIn: rect),
+                                       with: .color(color(forIntensity: t).opacity(0.35)))
+                        }
+                    }
                 }
             }
-            
-            // Desenhar o Rastro (Linha Amarela)
-            var path = Path()
-            let scaledPoints = points.map(scalePoint)
-            
-            // Move para o primeiro ponto
-            path.move(to: scaledPoints.first!)
-            
-            // Adiciona uma linha para cada ponto subsequente
-            for i in 1..<scaledPoints.count {
-                path.addLine(to: scaledPoints[i])
-            }
-            
-            // Desenha a linha amarela sobre a nuvem de calor
-            context.stroke(path, with: .color(.yellow), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-            
-            // Etapa D: Desenhar os Pontos (Círculos Vermelhos)
-            for point in scaledPoints {
-                let pointRect = CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)
-                context.fill(Path(ellipseIn: pointRect), with: .color(.red))
-            }
         }
-        .clipped()
     }
-    
-    private func color(forIntensity intensity: Double) -> Color {
-        let gradientColors: [Color] = [.blue, .green, .yellow, .red]
-        let colorIndex = max(0, Int((intensity * Double(gradientColors.count - 1)).rounded(.toNearestOrAwayFromZero)))
-        return gradientColors[min(gradientColors.count - 1, colorIndex)]
+
+    private func color(forIntensity t: CGFloat) -> Color {
+        switch t {
+        case ..<0.25: return .blue
+        case ..<0.5:  return .green
+        case ..<0.75: return .yellow
+        default:      return .red
+        }
     }
 }
-
-
-struct HeatmapResultView: View {
-    @State private var latestPoints: [CGPoint] = []
-    @State private var cancellables = Set<AnyCancellable>()
-    //private let courtImage = "quadra-futevolei"
-    
-    var body: some View {
-        VStack {
-            Text("Mapa de Calor do Treino")
-                .font(.title)
-            
-            ZStack(alignment: .bottomTrailing) {
-                Rectangle()
-                    .foregroundColor(.gray)
-                    .frame(width: 350, height: 200)
-                
-                VStack(){
-                    // A HeatmapView agora só precisa dos pontos brutos
-                    HeatmapView(points: latestPoints)
-                        .frame(width: 175, height: 200)
-                }
-
-            }
-            .padding()
-        }
-        .onAppear(perform: setupConnectivity)
-    }
-    
-    private func setupConnectivity() {
-        let manager = WatchConnectivityManager.shared
-        manager.workoutDataPublisher
-            .sink { points in
-                self.latestPoints = points
-            }
-            .store(in: &cancellables)
-    }
-}
+ 

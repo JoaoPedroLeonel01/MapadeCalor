@@ -26,13 +26,14 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
     @Published var currentPosition: CGPoint = .zero
     @Published var path: [CGPoint] = []
     
-    private var referenceHeading: Double?
+    // Referência unificada: YAW do CoreMotion (em radianos)
+    private var refYawRad: Double?
     
-    // Constantes de detecção de passo (ajustadas para eixo Y)
+    // Constantes de detecção de passo (ajuste fino conforme necessário)
     private let STEP_THRESHOLD_HIGH: Double = 0.20
-    private let STEP_THRESHOLD_LOW: Double = 0.12
-    private let ROTATION_LIMIT: Double = 1.0 // rad/s para ignorar giro de punho
-    private let STEP_LENGTH: Double = 0.75
+    private let STEP_THRESHOLD_LOW:  Double = 0.12
+    private let ROTATION_LIMIT:      Double = 1.0   // rad/s para ignorar giro de punho
+    private let STEP_LENGTH:         Double = 0.75  // metros por passo (aprox.)
     private var isStepInProgress = false
     
     // Pedir autorização para o HealthKit
@@ -51,8 +52,9 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
     }
     
     // Iniciar o treino
+    // Mantemos a assinatura original, mas ignoramos referenceHeading para evitar mismatch com CLHeading.
     func startWorkout(referenceHeading: Double) {
-        self.referenceHeading = referenceHeading
+        self.refYawRad = nil // será definido no primeiro sample do CoreMotion
         self.currentPosition = .zero
         self.path = [.zero]
         
@@ -89,11 +91,17 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
             return
         }
         
-        motionManager.deviceMotionUpdateInterval = 1.0 / 50.0 // 50Hz
+        motionManager.deviceMotionUpdateInterval = 0.5 / 50.0 // 50Hz
         let queue = OperationQueue()
         
         motionManager.startDeviceMotionUpdates(using: .xTrueNorthZVertical, to: queue) { [weak self] motion, error in
             guard let self = self, let motion = motion else { return }
+            
+            // Define a referência de yaw (em radianos) no primeiro sample
+            if self.refYawRad == nil {
+                self.refYawRad = motion.attitude.yaw
+                print(String(format: "Ref yaw definida: %.3f rad", self.refYawRad ?? 0))
+            }
             self.processDeviceMotion(motion)
         }
     }
@@ -116,31 +124,42 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
         if forwardAccel > STEP_THRESHOLD_HIGH && !isStepInProgress && !isRotatingWrist {
             isStepInProgress = true
             
-            guard let refHeading = self.referenceHeading else { return }
-            let yawInRadians = motion.attitude.yaw
-            let currentHeading = yawInRadians.toDegrees()
-            let relativeDirection = currentHeading - refHeading
+            guard let refYaw = self.refYawRad else { return }
+            let yaw = motion.attitude.yaw // radianos
+            var rel = yaw - refYaw        // radianos
             
-            let deltaX = STEP_LENGTH * sin(relativeDirection.toRadians())
-            let deltaY = STEP_LENGTH * cos(relativeDirection.toRadians())
+            // Normaliza para [-π, π]
+            while rel > .pi { rel -= 2 * .pi }
+            while rel < -.pi { rel += 2 * .pi }
             
-            print("------------------------------------")
-            print("PASSO DETECTADO!")
-            print(String(format: "  - Aceleração (Y): %.2f G", forwardAccel))
-            print(String(format: "  - Direção Atual do Watch: %.1f°", currentHeading))
-            print(String(format: "  - Direção Relativa à Quadra: %.1f°", relativeDirection))
-            print(String(format: "  - Deslocamento (Δx, Δy): (%.2f, %.2f)", deltaX, deltaY))
+            // Direção do deslocamento (Opção A – mais comum para .xTrueNorthZVertical) =====
+            // Se parecer rotacionado 90° ou espelhado, veja as opções comentadas abaixo.
+            let deltaX = STEP_LENGTH * cos(rel)
+            let deltaY = STEP_LENGTH * -sin(rel)
             
             DispatchQueue.main.async {
                 self.currentPosition.x += deltaX
                 self.currentPosition.y += deltaY
                 self.path.append(self.currentPosition)
-                print(String(format: "  - Nova Posição (X, Y): (%.2f, %.2f)", self.currentPosition.x, self.currentPosition.y))
+                print(String(format: "STEP ok | relYaw: %.3f rad | Δ(%.2f, %.2f) | pos(%.2f, %.2f) | count=%d",
+                             rel, deltaX, deltaY, self.currentPosition.x, self.currentPosition.y, self.path.count))
             }
         } else if forwardAccel < STEP_THRESHOLD_LOW {
             isStepInProgress = false
         }
     }
+    
+    /*
+     ===== Caso a direção ainda pareça errada, teste rapidamente: =====
+     
+     // Opção B (troca e espelho em Y):
+     let deltaX = STEP_LENGTH * sin(rel)
+     let deltaY = STEP_LENGTH *  cos(rel)
+     
+     // Opção C (troca + sinal diferente):
+     let deltaX = STEP_LENGTH *  sin(rel)
+     let deltaY = STEP_LENGTH * -cos(rel)
+    */
     
     // MARK: - HKWorkoutSessionDelegate
     func workoutSession(_ workoutSession: HKWorkoutSession, didChangeTo toState: HKWorkoutSessionState, from fromState: HKWorkoutSessionState, date: Date) {
@@ -168,8 +187,6 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
                         return
                     }
                     
-                    print("Dados a serem enviados: \(self.path.count) pontos.")
-                    
                     let serializablePath = self.path.map { ["x": $0.x, "y": $0.y] }
                     let workoutData: [String: Any] = [
                         "workoutPath": serializablePath,
@@ -177,6 +194,7 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
                     ]
                     
                     WatchConnectivityManager.shared.sendWorkoutData(workoutData)
+                    print("Dados enviados ao iPhone: \(self.path.count) pontos.")
                 }
             }
         }

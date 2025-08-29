@@ -9,42 +9,50 @@ import Foundation
 import CoreGraphics
 
 struct HeatmapProcessor {
-    
-    // Função principal que converte uma lista de pontos em uma grade de contagem
-    static func process(points: [CGPoint], intoGridOfSize size: (rows: Int, cols: Int)) -> (grid: [[Int]], maxValue: Int) {
-        guard !points.isEmpty else {
-            return (grid: Array(repeating: Array(repeating: 0, count: size.cols), count: size.rows), maxValue: 0)
+
+    struct GridResult {
+        let grid: [[Int]]
+        let maxValue: Int
+    }
+
+    // Processa pontos em uma grade, usando limites fixos (worldBounds).
+    static func process(points: [CGPoint],
+                        worldBounds: CGRect,
+                        gridSize: (rows: Int, cols: Int)) -> GridResult {
+
+        let rows = max(gridSize.rows, 1)
+        let cols = max(gridSize.cols, 1)
+
+        var grid = Array(repeating: Array(repeating: 0, count: cols), count: rows)
+        var maxValue = 0
+
+        let minX = worldBounds.minX
+        let maxX = worldBounds.maxX
+        let minY = worldBounds.minY
+        let maxY = worldBounds.maxY
+        let spanX = max(maxX - minX, 0.0001)
+        let spanY = max(maxY - minY, 0.0001)
+
+        for p in points {
+            // ignora pontos fora dos bounds
+            if p.x < minX || p.x > maxX || p.y < minY || p.y > maxY { continue }
+
+            let nx = (p.x - minX) / spanX           // 0..1
+            let ny = (p.y - minY) / spanY           // 0..1
+            let invY = 1 - ny
+
+            var col = Int(nx * CGFloat(cols))
+            var row = Int(invY * CGFloat(rows))
+
+            if col >= cols { col = cols - 1 }
+            if row >= rows { row = rows - 1 }
+            if col < 0 { col = 0 }
+            if row < 0 { row = 0 }
+
+            grid[row][col] &+= 1
+            if grid[row][col] > maxValue { maxValue = grid[row][col] }
         }
 
-        var grid = Array(repeating: Array(repeating: 0, count: size.cols), count: size.rows)
-        
-        // Encontra os limites dos dados para normalização
-        let minX = points.min(by: { $0.x < $1.x })!.x
-        let maxX = points.max(by: { $0.x < $1.x })!.x
-        let minY = points.min(by: { $0.y < $1.y })!.y
-        let maxY = points.max(by: { $0.y < $1.y })!.y
-        
-        let spanX = maxX - minX
-        let spanY = maxY - minY
-        
-        for point in points {
-            // Normaliza a posição para o intervalo [0, 1]
-            let normalizedX = spanX == 0 ? 0.5 : (point.x - minX) / spanX
-            let normalizedY = spanY == 0 ? 0.5 : (point.y - minY) / spanY
-            
-            // Mapeia para as coordenadas da grade
-            var col = Int(normalizedX * CGFloat(size.cols))
-            var row = Int(normalizedY * CGFloat(size.rows))
-            
-            // Garante que não saia dos limites
-            col = max(0, min(size.cols - 1, col))
-            row = max(0, min(size.rows - 1, row))
-            
-            // Incrementa a célula da grade
-            grid[row][col] += 1
-        }
-        
-        let maxValue = grid.flatMap { $0 }.max() ?? 0
-        return (grid: grid, maxValue: maxValue)
+        return GridResult(grid: grid, maxValue: maxValue)
     }
 }
