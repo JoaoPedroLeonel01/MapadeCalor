@@ -342,7 +342,7 @@
 				CODE_SIGN_ENTITLEMENTS = "Testemapa Watch App/Testemapa Watch App.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = A98HC555P6;
+				DEVELOPMENT_TEAM = 4649B2Z4DA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Testemapa;
@@ -357,7 +357,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = br.com.challenge07.Testemapa.watchkitapp;
+				PRODUCT_BUNDLE_IDENTIFIER = br.com.challenge07.Testemapaa.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -376,7 +376,7 @@
 				CODE_SIGN_ENTITLEMENTS = "Testemapa Watch App/Testemapa Watch App.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = A98HC555P6;
+				DEVELOPMENT_TEAM = 4649B2Z4DA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Testemapa;
@@ -391,7 +391,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = br.com.challenge07.Testemapa.watchkitapp;
+				PRODUCT_BUNDLE_IDENTIFIER = br.com.challenge07.Testemapaa.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -411,7 +411,7 @@
 				CODE_SIGN_ENTITLEMENTS = Testemapa/Testemapa.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = A98HC555P6;
+				DEVELOPMENT_TEAM = 4649B2Z4DA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Testemapa;
@@ -426,7 +426,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = br.com.challenge07.Testemapa;
+				PRODUCT_BUNDLE_IDENTIFIER = br.com.challenge07.Testemapaa;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -443,7 +443,7 @@
 				CODE_SIGN_ENTITLEMENTS = Testemapa/Testemapa.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = A98HC555P6;
+				DEVELOPMENT_TEAM = 4649B2Z4DA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Testemapa;
@@ -458,7 +458,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = br.com.challenge07.Testemapa;
+				PRODUCT_BUNDLE_IDENTIFIER = br.com.challenge07.Testemapaa;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
