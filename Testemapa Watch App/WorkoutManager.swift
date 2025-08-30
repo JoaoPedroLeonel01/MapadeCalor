@@ -3,63 +3,65 @@
 //  Testemapa Watch App
 //
 //  Created by Joao pedro Leonel on 13/08/25.
-//  Versão corrigida e otimizada
 //
 
-import Combine
-import CoreGraphics
-import CoreMotion
 import Foundation
 import HealthKit
+import CoreMotion
+import Combine
+import CoreGraphics
 
 class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
-
-    // MARK: - Módulos Principais
+    
+    // Módulos Principais
     private let healthStore = HKHealthStore()
     private let motionManager = CMMotionManager()
-    private let pedometer = CMPedometer()
-
-    // MARK: - Estado do Treino
+    
+    // Estado do Treino
     private var session: HKWorkoutSession?
     private var builder: HKWorkoutBuilder?
     @Published var workoutState: HKWorkoutSessionState = .notStarted
-
-    // MARK: - Dados de Posição (PDR)
+    
+    // Dados de Posição (PDR)
     @Published var currentPosition: CGPoint = .zero
     @Published var path: [CGPoint] = []
-
-    // MARK: - Referências de Cálculo
-    private var courtHeadingRad: Double?
-    private var lastDistance: Double = 0.0 // Guarda a última distância medida para calcular o delta
-
-    // MARK: - Ciclo de Vida do Treino
-
+    
+    // Referência unificada: YAW do CoreMotion (em radianos)
+    private var refYawRad: Double?
+    
+    // Constantes de detecção de passo (ajuste fino conforme necessário)
+    private let STEP_THRESHOLD_HIGH: Double = 0.20
+    private let STEP_THRESHOLD_LOW:  Double = 0.12
+    private let ROTATION_LIMIT:      Double = 1.0   // rad/s para ignorar giro de punho
+    private let STEP_LENGTH:         Double = 0.6  // metros por passo (aprox.)
+    private var isStepInProgress = false
+    
+    // Pedir autorização para o HealthKit
     func requestAuthorization() {
         let typesToShare: Set = [HKObjectType.workoutType()]
         let typesToRead: Set = [
             HKObjectType.quantityType(forIdentifier: .heartRate)!,
-            HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
+            HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!
         ]
-
+        
         healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead) { success, error in
             if !success {
                 print("Erro ao autorizar HealthKit: \(String(describing: error))")
             }
         }
     }
-
+    
+    // Iniciar o treino
+    // Mantemos a assinatura original, mas ignoramos referenceHeading para evitar mismatch com CLHeading.
     func startWorkout(referenceHeading: Double) {
-        // 1. Reseta o estado para um novo treino
-        self.courtHeadingRad = referenceHeading.toRadians()
+        self.refYawRad = nil // será definido no primeiro sample do CoreMotion
         self.currentPosition = .zero
         self.path = [.zero]
-        self.lastDistance = 0.0
-
-        // 2. Configura a sessão do HealthKit
+        
         let configuration = HKWorkoutConfiguration()
-        configuration.activityType = .volleyball
+        configuration.activityType = .soccer
         configuration.locationType = .outdoor
-
+        
         do {
             session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
             builder = session?.associatedWorkoutBuilder()
@@ -67,91 +69,129 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
             print("Erro ao criar a sessão de treino: \(error)")
             return
         }
-
+        
         session?.delegate = self
-        session?.startActivity(with: Date())
-
-        // 3. Inicia a coleta de dados de movimento
-        startPedometerUpdates()
-        startDirectionUpdates()
+        
+        let startDate = Date()
+        session?.startActivity(with: startDate)
+        
+        startMotionUpdates()
     }
-
+    
+    // Parar o treino
     func stopWorkout() {
-        pedometer.stopUpdates() // Use a chamada correta para parar
-        motionManager.stopDeviceMotionUpdates()
+        stopMotionUpdates()
         session?.end()
     }
-
-    // MARK: - Coleta de Dados de Movimento
-
-    private func startDirectionUpdates() {
-        guard motionManager.isDeviceMotionAvailable else { return }
-        // 10Hz é uma boa frequência para capturar a direção sem gastar muita bateria
-        motionManager.deviceMotionUpdateInterval = 1.0 / 10.0
-        motionManager.startDeviceMotionUpdates(using: .xTrueNorthZVertical)
-    }
-
-    private func startPedometerUpdates() {
-        guard CMPedometer.isDistanceAvailable() else {
-            print("Pedômetro não disponível.")
+    
+    // Iniciar captura do CoreMotion
+    private func startMotionUpdates() {
+        guard motionManager.isDeviceMotionAvailable else {
+            print("Device Motion não está disponível")
             return
         }
-
-        pedometer.startUpdates(from: Date()) { [weak self] pedometerData, error in
-            guard let self = self, let data = pedometerData, error == nil else { return }
-
-            // Garante que temos a direção mais recente do motionManager
-            guard let deviceMotion = self.motionManager.deviceMotion,
-                  let courtHeading = self.courtHeadingRad
-            else { return }
-
-            // --- LÓGICA CORRIGIDA ---
-
-            // 1. Calcula a distância percorrida APENAS neste update (o delta)
-            let newDistance = data.distance?.doubleValue ?? 0
-            let deltaDistance = newDistance - self.lastDistance
-            self.lastDistance = newDistance // Atualiza para o próximo cálculo
-
-            // 2. Pega a direção atual e a alinha com a bússola da quadra
-            let currentYaw = deviceMotion.attitude.yaw // Direção do corpo
-            let finalAngle = currentYaw + courtHeading  // Direção na quadra
-
-            // 3. Calcula o deslocamento (deltaX, deltaY) usando o delta da distância
-            let deltaX = deltaDistance * sin(finalAngle)
-            let deltaY = deltaDistance * cos(finalAngle)
-
-            // 4. Adiciona o deslocamento à posição atual
+        
+        motionManager.deviceMotionUpdateInterval = 0.5 / 50.0 // 50Hz
+        let queue = OperationQueue()
+        
+        motionManager.startDeviceMotionUpdates(using: .xTrueNorthZVertical, to: queue) { [weak self] motion, error in
+            guard let self = self, let motion = motion else { return }
+            
+            // Define a referência de yaw (em radianos) no primeiro sample
+            if self.refYawRad == nil {
+                self.refYawRad = motion.attitude.yaw
+                print(String(format: "Ref yaw definida: %.3f rad", self.refYawRad ?? 0))
+            }
+            self.processDeviceMotion(motion)
+        }
+    }
+    
+    // Para a captura do CoreMotion
+    private func stopMotionUpdates() {
+        motionManager.stopDeviceMotionUpdates()
+    }
+    
+    // Algoritmo principal
+    private func processDeviceMotion(_ motion: CMDeviceMotion) {
+        let forwardAccel = motion.userAcceleration.y // eixo Y = frente/trás do braço
+        let rotation = motion.rotationRate           // velocidade angular (giroscópio)
+        
+        // Filtro: ignora se giro de punho for muito alto
+        let isRotatingWrist = abs(rotation.x) > ROTATION_LIMIT ||
+                              abs(rotation.y) > ROTATION_LIMIT ||
+                              abs(rotation.z) > ROTATION_LIMIT
+        
+        if forwardAccel > STEP_THRESHOLD_HIGH && !isStepInProgress && !isRotatingWrist {
+            isStepInProgress = true
+            
+            guard let refYaw = self.refYawRad else { return }
+            let yaw = motion.attitude.yaw // radianos
+            var rel = yaw - refYaw        // radianos
+            
+            // Normaliza para [-π, π]
+            while rel > .pi { rel -= 2 * .pi }
+            while rel < -.pi { rel += 2 * .pi }
+            
+            // Direção do deslocamento (Opção A – mais comum para .xTrueNorthZVertical) =====
+            // Se parecer rotacionado 90° ou espelhado, veja as opções comentadas abaixo.
+            let deltaX = STEP_LENGTH * cos(rel)
+            let deltaY = STEP_LENGTH * -sin(rel)
+            
             DispatchQueue.main.async {
                 self.currentPosition.x += deltaX
                 self.currentPosition.y += deltaY
                 self.path.append(self.currentPosition)
-
-                // Opcional: print para depuração
-                 print(String(format: "ΔDist: %.2fm | Pos(%.2f, %.2f)",
-                              deltaDistance, self.currentPosition.x, self.currentPosition.y))
+                print(String(format: "STEP ok | relYaw: %.3f rad | Δ(%.2f, %.2f) | pos(%.2f, %.2f) | count=%d",
+                             rel, deltaX, deltaY, self.currentPosition.x, self.currentPosition.y, self.path.count))
             }
+        } else if forwardAccel < STEP_THRESHOLD_LOW {
+            isStepInProgress = false
         }
     }
-
-    // MARK: - HKWorkoutSessionDelegate
     
+    /*
+     ===== Caso a direção ainda pareça errada, teste rapidamente: =====
+     
+     // Opção B (troca e espelho em Y):
+     let deltaX = STEP_LENGTH * sin(rel)
+     let deltaY = STEP_LENGTH *  cos(rel)
+     
+     // Opção C (troca + sinal diferente):
+     let deltaX = STEP_LENGTH *  sin(rel)
+     let deltaY = STEP_LENGTH * -cos(rel)
+    */
+    
+    // MARK: - HKWorkoutSessionDelegate
     func workoutSession(_ workoutSession: HKWorkoutSession, didChangeTo toState: HKWorkoutSessionState, from fromState: HKWorkoutSessionState, date: Date) {
         DispatchQueue.main.async {
             self.workoutState = toState
         }
-
+        
         if toState == .running {
-            builder?.beginCollection(withStart: date) { _,_ in }
+            builder?.beginCollection(withStart: date) { success, error in
+                if !success {
+                    print("Erro ao iniciar a coleção de dados do treino: \(String(describing: error))")
+                } else {
+                    print("Coleção de dados iniciada.")
+                }
+            }
         }
-
+        
         if toState == .ended {
-            builder?.endCollection(withEnd: date) { _, _ in
-                self.builder?.finishWorkout { _, _ in
-                    print("Treino finalizado. Pontos coletados: \(self.path.count)")
-                    guard !self.path.isEmpty else { return }
-
+            builder?.endCollection(withEnd: date) { success, error in
+                self.builder?.finishWorkout { workout, error in
+                    print("Treino finalizado. Pontos de mapa de calor coletados: \(self.path.count)")
+                    
+                    guard !self.path.isEmpty else {
+                        print("ERRO: array 'path' está vazio.")
+                        return
+                    }
+                    
                     let serializablePath = self.path.map { ["x": $0.x, "y": $0.y] }
-                    let workoutData: [String: Any] = ["workoutPath": serializablePath]
+                    let workoutData: [String: Any] = [
+                        "workoutPath": serializablePath,
+                        "workoutEndData": Date()
+                    ]
                     
                     WatchConnectivityManager.shared.sendWorkoutData(workoutData)
                     print("Dados enviados ao iPhone: \(self.path.count) pontos.")
@@ -159,9 +199,8 @@ class WorkoutManager: NSObject, ObservableObject, HKWorkoutSessionDelegate {
             }
         }
     }
-
+    
     func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
         print("Sessão de treino falhou com erro: \(error)")
     }
 }
-

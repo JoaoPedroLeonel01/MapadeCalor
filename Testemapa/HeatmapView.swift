@@ -84,7 +84,7 @@ struct HeatmapView: View {
                                               height: 2 * radius)
 
                             layer.fill(Path(ellipseIn: rect),
-                                       with: .color(color(forIntensity: t).opacity(0.35)))
+                                       with: .color(color(forIntensity: t).opacity(0.2)))
                         }
                     }
                 }
@@ -94,9 +94,8 @@ struct HeatmapView: View {
 
     private func color(forIntensity t: CGFloat) -> Color {
         switch t {
-        case ..<0.25: return .blue
-        case ..<0.5:  return .green
-        case ..<0.75: return .yellow
+        case ..<0.75:  return .yellow
+        case ..<0.95: return .orange
         default:      return .red
         }
     }

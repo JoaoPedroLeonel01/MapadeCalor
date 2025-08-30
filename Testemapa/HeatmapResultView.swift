@@ -29,7 +29,7 @@ struct HeatmapResultView: View {
             HeatmapView(
                 points: latestPoints,
                 worldBounds: debugSquare,
-                rotationDegrees: 360
+                rotationDegrees: 220
             )
             .allowsHitTesting(false)
         }
